@@ -309,7 +309,7 @@ int main() {
 	add(new Sphere(0.5,Vec(0,1.9,-3)),Vec(0,0,0),10000,1); // Light
 
 	params["refr_index"] = 1.5;
-	params["spp"] = 8.0; // samples per pixel
+	params["spp"] = 20.0; // samples per pixel
 	
 	Vec **pix = new Vec*[width];
 	for(int i=0;i<width;i++) {
@@ -347,8 +347,12 @@ int main() {
 	char time_str[1024];
 	char file_name[1024];
 
+	clock_t end = clock();
+	double t = (double)(end-start)/CLOCKS_PER_SEC;
+	printf("\nRender time: %fs.\n",t);
+	
 	sprintf(time_str, "%02d-%02d-%02d_%02d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-	sprintf(file_name, "%s%s.ppm", "ray", time_str);
+	sprintf(file_name, "%s%s_%0.0fspp_%0.0fsec.ppm", "ray", time_str, spp, t);
 	
 	FILE *f = fopen(file_name, "w");
 	fprintf(f, "P3\n%d %d\n%d\n ",width,height,255);
@@ -359,8 +363,5 @@ int main() {
 		fprintf(f, "\n");
 	}
 	fclose(f);
-	clock_t end = clock();
-	double t = (double)(end-start)/CLOCKS_PER_SEC;
-	printf("\nRender time: %fs.\n",t);
 	return 0;
 }
