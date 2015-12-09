@@ -35,7 +35,7 @@ std::uniform_real_distribution<double> uniform;
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
-const int width=900, height=900;
+const int width=600, height=600;
 const double inf=1e9;
 const double eps=1e-6;
 using namespace std;
@@ -342,7 +342,15 @@ int main() {
 		}
 	}
 
-	FILE *f = fopen("ray.ppm", "w");
+	time_t time_handler = time(NULL);
+	struct tm tm = *localtime(&time_handler);
+	char time_str[1024];
+	char file_name[1024];
+
+	sprintf(time_str, "%02d-%02d-%02d_%02d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	sprintf(file_name, "%s%s.ppm", "ray", time_str);
+	
+	FILE *f = fopen(file_name, "w");
 	fprintf(f, "P3\n%d %d\n%d\n ",width,height,255);
 	for (int row=0;row<height;row++) {
 		for (int col=0;col<width;col++) {
