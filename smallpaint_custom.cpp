@@ -35,7 +35,9 @@ std::uniform_real_distribution<double> uniform;
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
-const int width=600, height=600;
+const int width=256, height=256;
+const double SPP=24.0;
+const int RR_DEPTH = 5.0;
 const double inf=1e9;
 const double eps=1e-6;
 using namespace std;
@@ -212,7 +214,7 @@ Vec hemisphere(double u1, double u2) {
 void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton& hal, Halton& hal2) {
 	// Russian roulette: starting at depth 5, each recursive step will stop with a probability of 0.1
 	double rrFactor = 1.0;
-	if (depth >= 5) {
+	if (depth >= RR_DEPTH) {
 		const double rrStopProbability = 0.1;
 		if (RND2 <= rrStopProbability) {
 			return;
@@ -309,7 +311,7 @@ int main() {
 	add(new Sphere(0.5,Vec(0,1.9,-3)),Vec(0,0,0),10000,1); // Light
 
 	params["refr_index"] = 1.5;
-	params["spp"] = 20.0; // samples per pixel
+	params["spp"] = SPP; // samples per pixel
 	
 	Vec **pix = new Vec*[width];
 	for(int i=0;i<width;i++) {
