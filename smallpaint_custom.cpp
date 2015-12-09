@@ -23,6 +23,7 @@
 #include <random>
 #include <cstdint>
 #include <algorithm>
+#include <sys/time.h>
 
 // Helpers for random number generation
 std::mt19937 mersenneTwister;
@@ -30,13 +31,15 @@ std::uniform_real_distribution<double> uniform;
 
 #define RND (2.0*uniform(mersenneTwister)-1.0)
 #define RND2 (uniform(mersenneTwister))
+#define RNDHF (uniform(mersenneTwister)-0.5)
 
 #define PI 3.1415926536
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
+const int parallelism_enabled = 1;
 const int width=256, height=256;
-const double SPP=24.0;
+const int SPP=64;
 const int RR_DEPTH = 5.0;
 const double inf=1e9;
 const double eps=1e-6;
@@ -295,7 +298,19 @@ int main() {
 			s->setMat(cl,emission,type);
 			scene.add(s);
 	};
-
+	
+	/* Random numbers - testing the functions
+	// printf("Random number test RND\n");
+	// for(int i=0;i<40;i++) {
+		// printf("%f\n", RND);
+	// }
+	// printf("Random number test RND2\n");
+	// for(int i=0;i<40;i++) {
+		// printf("%f\n", RND2);
+	// }
+	// return 0;
+	*/
+	
 	// Radius, position, color, emission, type (1=diff, 2=spec, 3=refr) for spheres
 	add(new Sphere(1.05,Vec(-0.75,-1.45,-4.4)),Vec(4,8,4),0,2); // Middle sphere
 //	add(new Sphere(0.45,Vec(0.8,-2.05,-3.7)),Vec(10,10,1),0,3); // Right sphere
@@ -307,11 +322,12 @@ int main() {
 	add(new Plane(2.75,Vec(1,0,0)),Vec(10,2,2),0,1); // Left plane
 	add(new Plane(2.75,Vec(-1,0,0)),Vec(2,10,2),0,1); // Right plane
 	add(new Plane(3.0,Vec(0,-1,0)),Vec(6,6,6),0,1); // Ceiling plane
-	add(new Plane(0.5,Vec(0,0,-1)),Vec(6,6,6),0,1); // Front plane
+	add(new Plane(0.5,Vec(0,0,-1)),Vec(6,6,6),1000,1); // Front plane
 	add(new Sphere(0.5,Vec(0,1.9,-3)),Vec(0,0,0),10000,1); // Light
+	//add(new Sphere(1.5,Vec(2.13,-0.23,-4.17)),Vec(0,0,0),10000,1); // Light
 
 	params["refr_index"] = 1.5;
-	params["spp"] = SPP; // samples per pixel
+	params["spp"] = static_cast<double>(SPP) + eps; // samples per pixel
 	
 	Vec **pix = new Vec*[width];
 	for(int i=0;i<width;i++) {
@@ -324,22 +340,31 @@ int main() {
 	hal.number(0,2);
 	hal2.number(0,2);
 
-	clock_t start = clock();
+	// "clock" gives wrong results for parallel processing
+	//clock_t start = clock();
+	timeval tv;	//timezone tz;
+	gettimeofday(&tv, NULL);
+	suseconds_t start = tv.tv_usec + (tv.tv_sec * 1000000);
 
-	#pragma omp parallel for schedule(dynamic) firstprivate(hal,hal2)
+	const double one_over_spp = 1.0 / spp;
+	
+	#pragma omp parallel for schedule(dynamic) firstprivate(hal,hal2) if (parallelism_enabled)
 	for (int col=0;col<width;col++) {
+		Vec color;
+		Ray ray;
 		fprintf(stdout,"\rRendering: %1.0fspp %8.2f%%",spp,(double)col/width*100);
 		for(int row=0;row<height;row++) {
-			for(int s=0;s<spp;s++) {
-				Vec color;
-				Ray ray;
-				ray.o = (Vec(0,0,0)); // rays start out from here
-				Vec cam = camcr(col,row); // construct image plane coordinates
-				cam.x = cam.x + RND/700; // anti-aliasing for free
-				cam.y = cam.y + RND/700;
+			for(int s=0;s<SPP;s++) {
+				//ray.o = (Vec(0,0,0)); // rays start out from here
+				ray.o.x = ray.o.y = ray.o.z = 0.0; // rays start out from here
+				color.x = color.y = color.z = 0.0; // reset color
+				Vec cam = camcr(col+RNDHF,row+RNDHF); // construct image plane coordinates
+				// cam.x = cam.x + RND/700; // anti-aliasing for free
+				// cam.y = cam.y + RND/700; // Replaced these with the +RNDHF above (now spans entire pixel area)
 				ray.d = (cam - ray.o).norm(); // point from the origin to the camera plane
 				trace(ray,scene,0,color,params,hal,hal2);
-				pix[col][row] = pix[col][row] + color / spp; // write the contributions
+				pix[col][row] = pix[col][row] + color * one_over_spp; // write the contributions
+				//pix[col][row] = pix[col][row] + color / spp; // write the contributions
 			}
 		}
 	}
@@ -349,8 +374,13 @@ int main() {
 	char time_str[1024];
 	char file_name[1024];
 
-	clock_t end = clock();
-	double t = (double)(end-start)/CLOCKS_PER_SEC;
+	// "clock" gives wrong results for parallel processing
+	//clock_t end = clock();
+	//double t = (double)(end-start)/CLOCKS_PER_SEC;
+	gettimeofday(&tv, NULL);
+	suseconds_t end = tv.tv_usec + (tv.tv_sec * 1000000);
+
+	double t = (double)(end-start) * 0.000001;
 	printf("\nRender time: %fs.\n",t);
 	
 	sprintf(time_str, "%02d-%02d-%02d_%02d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
