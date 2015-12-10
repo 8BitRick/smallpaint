@@ -1,6 +1,7 @@
 // smallpaint by karoly zsolnai - zsolnai@cg.tuwien.ac.at
-//
-// compilation by: g++ smallpaint.cpp -O3 -std=gnu++0x -fopenmp
+// with modifications by Richard Leon Terrell - https://github.com/8BitRick
+// 
+// compilation by: g++ smallpaint_custom.cpp -O3 -std=gnu++0x -fopenmp -o sp.exe
 // uses >=gcc-4.5.0
 // render, modify, create new scenes, tinker around, and most of all:
 // have fun!
@@ -26,12 +27,17 @@
 #include <sys/time.h>
 
 // Helpers for random number generation
-std::mt19937 mersenneTwister;
-std::uniform_real_distribution<double> uniform;
-
-#define RND (2.0*uniform(mersenneTwister)-1.0)
-#define RND2 (uniform(mersenneTwister))
-#define RNDHF (uniform(mersenneTwister)-0.5)
+// RLT - Modified to work well in parallel threads and optimized for speed
+#define custom_lcg(next) (next * 2862933555777941757ULL + 3037000493ULL)
+#define SHR_BIT (64 - (53-1)) // DBL_MANT_DIG = 53
+double rand_fast(uint64_t &internal_next) {
+	internal_next = custom_lcg(internal_next);
+	uint64_t temp = (0x3ff0000000000000 | internal_next >> SHR_BIT);
+	return (*reinterpret_cast<double*>(&temp) - 1.0);
+}
+#define RND (2.0*rand_fast(curr_rand)-1.0)
+#define RND2 (rand_fast(curr_rand))
+#define RNDHF (rand_fast(curr_rand)-0.5)
 
 #define PI 3.1415926536
 #define MIN(a,b) (((a)<(b))?(a):(b))
@@ -39,8 +45,17 @@ std::uniform_real_distribution<double> uniform;
 
 const int parallelism_enabled = 1;
 const int width=256, height=256;
-const int SPP=64;
-const int RR_DEPTH = 5.0;
+
+const int SPP_W=8; // horizontal samples per pixel
+const int SPP_H=8; // vertical samples per pixel
+const int SPP = SPP_W * SPP_H; // total samples per pixel
+
+// PIXEL_RADIUS is radius of sampling area around pixel
+// 0.0 = only through center of pixel
+// 0.5 = full area of pixel, no gaps between pixels 
+//       (i.e. shoot rays from -0.5 to 0.5 around each pixel)
+const double PIXEL_RADIUS=0.25;
+const int RR_DEPTH = 5.0; // Depth at which Russian Roulette begins
 const double inf=1e9;
 const double eps=1e-6;
 using namespace std;
@@ -214,7 +229,7 @@ Vec hemisphere(double u1, double u2) {
 	return Vec(cos(phi)*r, sin(phi)*r, u1);
 }
 
-void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton& hal, Halton& hal2) {
+void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton& hal, Halton& hal2, uint64_t &curr_rand) {
 	// Russian roulette: starting at depth 5, each recursive step will stop with a probability of 0.1
 	double rrFactor = 1.0;
 	if (depth >= RR_DEPTH) {
@@ -249,7 +264,7 @@ void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton
 		ray.d = rotatedDir;	// already normalized
 		double cost=ray.d.dot(N);
 		Vec tmp;
-		trace(ray,scene,depth+1,tmp,params,hal,hal2);
+		trace(ray,scene,depth+1,tmp,params,hal,hal2,curr_rand);
 		clr = clr + (tmp.mult(intersection.object->cl)) * cost * 0.1 * rrFactor;
 	}
 
@@ -260,7 +275,7 @@ void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton
 		double cost = ray.d.dot(N);
 		ray.d = (ray.d - N*(cost*2)).norm();
 		Vec tmp = Vec(0,0,0);
-		trace(ray,scene,depth+1,tmp,params,hal,hal2);
+		trace(ray,scene,depth+1,tmp,params,hal,hal2,curr_rand);
 		clr = clr + tmp * rrFactor;
 	}
 
@@ -285,7 +300,7 @@ void trace(Ray &ray, const Scene& scene, int depth, Vec& clr, pl& params, Halton
 			ray.d = (ray.d+N*(cost1*2)).norm();
 		}
 		Vec tmp;
-		trace(ray,scene,depth+1,tmp,params,hal,hal2);
+		trace(ray,scene,depth+1,tmp,params,hal,hal2,curr_rand);
 		clr = clr + tmp * 1.15 * rrFactor;
 	}
 }
@@ -299,18 +314,6 @@ int main() {
 			scene.add(s);
 	};
 	
-	/* Random numbers - testing the functions
-	// printf("Random number test RND\n");
-	// for(int i=0;i<40;i++) {
-		// printf("%f\n", RND);
-	// }
-	// printf("Random number test RND2\n");
-	// for(int i=0;i<40;i++) {
-		// printf("%f\n", RND2);
-	// }
-	// return 0;
-	*/
-	
 	// Radius, position, color, emission, type (1=diff, 2=spec, 3=refr) for spheres
 	add(new Sphere(1.05,Vec(-0.75,-1.45,-4.4)),Vec(4,8,4),0,2); // Middle sphere
 //	add(new Sphere(0.45,Vec(0.8,-2.05,-3.7)),Vec(10,10,1),0,3); // Right sphere
@@ -322,7 +325,7 @@ int main() {
 	add(new Plane(2.75,Vec(1,0,0)),Vec(10,2,2),0,1); // Left plane
 	add(new Plane(2.75,Vec(-1,0,0)),Vec(2,10,2),0,1); // Right plane
 	add(new Plane(3.0,Vec(0,-1,0)),Vec(6,6,6),0,1); // Ceiling plane
-	add(new Plane(0.5,Vec(0,0,-1)),Vec(6,6,6),1000,1); // Front plane
+	add(new Plane(0.5,Vec(0,0,-1)),Vec(6,6,6),100,1); // Front plane
 	add(new Sphere(0.5,Vec(0,1.9,-3)),Vec(0,0,0),10000,1); // Light
 	//add(new Sphere(1.5,Vec(2.13,-0.23,-4.17)),Vec(0,0,0),10000,1); // Light
 
@@ -340,52 +343,58 @@ int main() {
 	hal.number(0,2);
 	hal2.number(0,2);
 
-	// "clock" gives wrong results for parallel processing
-	//clock_t start = clock();
-	timeval tv;	//timezone tz;
-	gettimeofday(&tv, NULL);
+	// Start timer for rendering time
+	timeval tv;	gettimeofday(&tv, NULL);
 	suseconds_t start = tv.tv_usec + (tv.tv_sec * 1000000);
 
+	// Small optimizations - pre-calculate these values
 	const double one_over_spp = 1.0 / spp;
-	
-	#pragma omp parallel for schedule(dynamic) firstprivate(hal,hal2) if (parallelism_enabled)
-	for (int col=0;col<width;col++) {
-		Vec color;
+	const double spp_step_x = (PIXEL_RADIUS*2.0) / (double)SPP_W;
+	const double spp_step_y = (PIXEL_RADIUS*2.0) / (double)SPP_H;
+
+	#pragma omp parallel firstprivate(hal,hal2) if (parallelism_enabled)
+	{
+		// Each thread gets its own random value to play with
+		// Allows random to run in parallel
+		uint64_t curr_rand = time(NULL);
+		
+		// optimizations - only create these once per thread
+		Vec color; 
 		Ray ray;
-		fprintf(stdout,"\rRendering: %1.0fspp %8.2f%%",spp,(double)col/width*100);
-		for(int row=0;row<height;row++) {
-			for(int s=0;s<SPP;s++) {
-				//ray.o = (Vec(0,0,0)); // rays start out from here
-				ray.o.x = ray.o.y = ray.o.z = 0.0; // rays start out from here
-				color.x = color.y = color.z = 0.0; // reset color
-				Vec cam = camcr(col+RNDHF,row+RNDHF); // construct image plane coordinates
-				// cam.x = cam.x + RND/700; // anti-aliasing for free
-				// cam.y = cam.y + RND/700; // Replaced these with the +RNDHF above (now spans entire pixel area)
-				ray.d = (cam - ray.o).norm(); // point from the origin to the camera plane
-				trace(ray,scene,0,color,params,hal,hal2);
-				pix[col][row] = pix[col][row] + color * one_over_spp; // write the contributions
-				//pix[col][row] = pix[col][row] + color / spp; // write the contributions
+	
+		#pragma omp for schedule(dynamic)
+		for (int col=0;col<width;col++) {
+			fprintf(stdout,"\rRendering: %1.0fspp %8.2f%%",spp,(double)col/width*100);
+			for(int row=0;row<height;row++) {
+				for(double x=-PIXEL_RADIUS; x < PIXEL_RADIUS-eps; x+=spp_step_x) {
+					for(double y=-PIXEL_RADIUS; y < PIXEL_RADIUS-eps; y+=spp_step_y) {
+						ray.o.x = ray.o.y = ray.o.z = 0.0; // rays start out from here
+						color.x = color.y = color.z = 0.0; // reset color
+						Vec cam = camcr(col+x,row+y); // construct image plane coordinates
+						ray.d = (cam - ray.o).norm(); // point from the origin to the camera plane
+						trace(ray,scene,0,color,params,hal,hal2,curr_rand);
+						pix[col][row] = pix[col][row] + color * one_over_spp; // write the contributions
+					}
+				}
 			}
 		}
 	}
-
+	
+	// Get local time to tag onto file name
 	time_t time_handler = time(NULL);
 	struct tm tm = *localtime(&time_handler);
 	char time_str[1024];
 	char file_name[1024];
 
-	// "clock" gives wrong results for parallel processing
-	//clock_t end = clock();
-	//double t = (double)(end-start)/CLOCKS_PER_SEC;
+	// End timer for rendering
 	gettimeofday(&tv, NULL);
 	suseconds_t end = tv.tv_usec + (tv.tv_sec * 1000000);
-
 	double t = (double)(end-start) * 0.000001;
 	printf("\nRender time: %fs.\n",t);
 	
+	// Save the results to file
 	sprintf(time_str, "%02d-%02d-%02d_%02d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 	sprintf(file_name, "%s%s_%0.0fspp_%0.0fsec.ppm", "ray", time_str, spp, t);
-	
 	FILE *f = fopen(file_name, "w");
 	fprintf(f, "P3\n%d %d\n%d\n ",width,height,255);
 	for (int row=0;row<height;row++) {
